@@ -14,21 +14,25 @@ ConsulResolver::ConsulResolver(
     const std::string& cpuThresholdKey,
     const std::string& zoneCPUKey,
     const std::string& machineFactorKey,
+    const std::string& nodeFactorDataKey,
+    const std::string& rateFactorKey,
     int                intervalS,
     int                timeoutS) : client(address) {
-    this->address          = address;
-    this->service          = service;
-    this->cpuThresholdKey  = cpuThresholdKey,
-    this->zoneCPUKey       = zoneCPUKey,
-    this->machineFactorKey = machineFactorKey,
-    this->intervalS        = intervalS;
-    this->timeoutS         = timeoutS;
-    this->cpuThreshold     = 0;
-    this->done             = false;
-    this->lastIndex        = "0";
-    this->zone             = Zone();
-    this->serviceUpdater   = nullptr;
-    this->logger           = nullptr;
+    this->address           = address;
+    this->service           = service;
+    this->cpuThresholdKey   = cpuThresholdKey,
+    this->zoneCPUKey        = zoneCPUKey,
+    this->machineFactorKey  = machineFactorKey,
+    this->nodeFactorDataKey = nodeFactorDataKey,
+    this->rateFactorKey     = rateFactorKey,
+    this->intervalS         = intervalS;
+    this->timeoutS          = timeoutS;
+    this->cpuThreshold      = 0;
+    this->done              = false;
+    this->lastIndex         = "0";
+    this->zone              = Zone();
+    this->serviceUpdater    = nullptr;
+    this->logger            = nullptr;
 }
 
 std::tuple<int, std::string> ConsulResolver::Start() {
@@ -72,6 +76,14 @@ std::tuple<int, std::string> ConsulResolver::Stop() {
 std::tuple<int, std::string> ConsulResolver::_updateAll() {
     int         code;
     std::string err;
+    std::tie(code, err) = this->_updateRateFactorMap();
+    if (code != 0 && this->logger != nullptr) {
+        LOG4CPLUS_WARN(*(this->logger), "update rateFactorMap failed. code: [" << code << "], err: [" << err << "]");
+    }
+    std::tie(code, err) = this->_updateNodeFactorDataMap();
+    if (code != 0 && this->logger != nullptr) {
+        LOG4CPLUS_WARN(*(this->logger), "update nodeFactorDataMap failed. code: [" << code << "], err: [" << err << "]");
+    }
     std::tie(code, err) = this->_updateCPUThreshold();
     if (code != 0 && this->logger != nullptr) {
         LOG4CPLUS_WARN(*(this->logger), "update CPU threshold failed. code: [" << code << "], err: [" << err << "]");
@@ -89,6 +101,76 @@ std::tuple<int, std::string> ConsulResolver::_updateAll() {
         LOG4CPLUS_WARN(*(this->logger), "update serviceZone failed. code: [" << code << "], err: [" << err << "]");
         return std::make_tuple(code, err);
     }
+    return std::make_tuple(0, "");
+}
+
+std::tuple<int, std::string> ConsulResolver::_updateRateFactorMap() {
+    int          status = -1;
+    json11::Json kv;
+    std::string  err;
+    std::tie(status, kv, err) = this->client.GetKV(this->zoneCPUKey, this->timeoutS, this->lastIndex);
+    if (status != 0) {
+        return std::make_tuple(status, err);
+    }
+
+    auto rateFactorMap = std::unordered_map<std::string, double>();
+    for (const auto& item : kv.object_items()) {
+        rateFactorMap[item.first] = item.second.number_value();
+    }
+
+    this->rateFactorMap = rateFactorMap;
+
+    LOG4CPLUS_INFO(*(this->logger), "update rateFactorMap: [" << json11::Json(this->rateFactorMap).dump() << "]");
+    return std::make_tuple(0, "");
+}
+
+std::tuple<int, std::string> ConsulResolver::_updateNodeFactorDataMap() {
+    int status = -1;
+    json11::Json kv;
+    std::string err;
+    std::tie(status, kv, err) = this->client.GetKV(this->nodeFactorDataKey, this->timeoutS, this->lastIndex);
+    if (status!=0) {
+        return std::make_tuple(status, err);
+    }
+    auto nodes = kv["data"].array_items();
+//    int64_t updated = kv["updated"].int_value();
+    double avgWorkLoad = 0;
+    double workLoadSum = 0;
+    for (const auto& node : nodes) {
+        if (!node["CPUUtilization"].is_null()) {
+            double cpuUtilization = node["CPUUtilization"].number_value();
+            workLoadSum += cpuUtilization;
+        }
+    }
+    if (!nodes.empty()) {
+        avgWorkLoad = workLoadSum/nodes.size();
+    }
+    auto nodeFactorDataMap = std::unordered_map<std::string, std::shared_ptr<NodeFactorData>>();
+    double rateThreshold = static_cast<double>(this->rateFactorMap["rateThreshold"]);
+    double learningRate = static_cast<double>(this->rateFactorMap["learningRate"]);
+    for (const auto& node : nodes) {
+        if (!node["CPUUtilization"].is_null()) {
+            std::string instanceId = node["instanceid"].string_value();
+            double cpuUtilization = node["CPUUtilization"].number_value();
+            double weight = 0.0;
+            auto i = this->nodeFactorDataMap.find(instanceId);
+            if (i==this->nodeFactorDataMap.end()) {
+                auto nd = i->second;
+                weight = nd->weight;
+            }
+            if (std::abs(cpuUtilization-avgWorkLoad)>avgWorkLoad*rateThreshold) {
+                weight += learningRate*(cpuUtilization-avgWorkLoad);
+            }
+            std::shared_ptr<NodeFactorData> nodeFactorData = std::make_shared<NodeFactorData>();
+            nodeFactorData->cpuUtilization = cpuUtilization;
+            nodeFactorData->weight = weight;
+
+            nodeFactorDataMap.emplace(instanceId, nodeFactorData);
+        }
+    }
+
+    this->nodeFactorDataMap = nodeFactorDataMap;
+
     return std::make_tuple(0, "");
 }
 

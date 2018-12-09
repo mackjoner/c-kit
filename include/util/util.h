@@ -7,6 +7,7 @@ namespace kit {
 
 double      CPUUsage();
 std::string Zone();
+std::string EC2MetaData(const std::string& option);
 
 // return status, output
 std::tuple<int, std::string> GetStatusOutput(const std::string& command);

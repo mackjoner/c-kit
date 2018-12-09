@@ -78,6 +78,24 @@ std::string Zone() {
     return kv[1];
 }
 
+std::string EC2MetaData(const std::string &option) {
+    std::string output;
+    int         status;
+    std::tie(status, output) = GetStatusOutput("/opt/aws/bin/ec2-metadata " + option);
+    if (status != 0) {
+        return "unknown";
+    }
+
+    std::vector<std::string> kv;
+    auto                     str = output.substr(0, output.length() - 1);
+    boost::split(kv, str, [](char ch) { return ch == ' '; });
+    if (kv.size() != 2) {
+        return "unknown";
+    }
+
+    return kv[1];
+}
+
 static size_t WriteToStream(void *ptr, size_t size, size_t nmemb, std::stringstream *stream) {
     stream->write((const char *)ptr, size * nmemb);
     return size * nmemb;

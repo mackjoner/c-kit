@@ -2,6 +2,7 @@
 
 #include <boost/thread/shared_mutex.hpp>
 #include <iostream>
+#include <cmath>
 #include <json11.hpp>
 #include <log4cplus/logger.h>
 #include <mutex>
@@ -12,6 +13,14 @@
 #include "consul_client.h"
 
 namespace kit {
+
+struct NodeFactorData {
+//    explicit NodeFactorData(double cpuUtilization = 0.0, double weight = 0.0)
+//            :cpuUtilization(cpuUtilization), weight(weight) { }
+
+    double cpuUtilization;
+    double weight;
+};
 
 struct ServiceZone {
     std::string                               zone;
@@ -57,6 +66,10 @@ class ConsulResolver {
     std::string                                                cpuThresholdKey;      // cpu 阀值，超过阀值跨 zone 访问，从 consul 中获取
     std::string                                                zoneCPUKey;           // cpu 阀值在 consul 中的 key
     std::string                                                machineFactorKey;     // 机器权重在 consul 中的 key
+    std::string                                                nodeFactorDataKey;    // 服务节点指标数据在 consul 中的 key
+    std::unordered_map<std::string, double>                    rateFactorMap;        // 控制权重调整阀值，从 consul 中获取，{"rateThreshold":x.xx,"learningRate":x.xx}
+    std::string                                                rateFactorKey;        // 控制权重调整阀值在 consul 中的 key
+    std::unordered_map<std::string, std::shared_ptr<NodeFactorData>>            nodeFactorDataMap;    // 服务节点指标数据
     int                                                        intervalS;            // 服务列表更新最小间隔秒数
     int                                                        timeoutS;             // 访问 consul 超时时间
     bool                                                       done;                 // 退出标记
@@ -77,6 +90,8 @@ class ConsulResolver {
 
     std::thread* serviceUpdater;
 
+    std::tuple<int, std::string> _updateRateFactorMap();
+    std::tuple<int, std::string> _updateNodeFactorDataMap();
     std::tuple<int, std::string> _updateServiceZone();
     std::tuple<int, std::string> _updateZoneCPUMap();
     std::tuple<int, std::string> _updateMachineFactorMap();
@@ -87,11 +102,13 @@ class ConsulResolver {
     ConsulResolver(
         const std::string& address,
         const std::string& service,
-        const std::string& cpuThresholdKey  = "as/rs/cpu_threshold.json",
-        const std::string& zoneCPUKey       = "as/rs/zone_cpu.json",
-        const std::string& machineFactorKey = "as/rs/machine_factor.json",
-        int                intervalS        = 60,
-        int                timeoutS         = 1);
+        const std::string& cpuThresholdKey   = "as/rs/cpu_threshold.json",
+        const std::string& zoneCPUKey        = "as/rs/zone_cpu.json",
+        const std::string& machineFactorKey  = "as/rs/machine_factor.json",
+        const std::string& nodeFactorDataKey = "clb/rs/monitor.json",
+        const std::string& rateFactorKey     = "clb/rs/rate_factor.json",
+        int                intervalS         = 60,
+        int                timeoutS          = 1);
 
     void SetLogger(log4cplus::Logger* logger) {
         this->logger = logger;
