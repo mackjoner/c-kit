@@ -135,15 +135,15 @@ std::tuple<int, std::string> ConsulResolver::_updateNodeFactorDataMap() {
     auto nodes = kv["data"].array_items();
 //    int64_t updated = kv["updated"].int_value();
     double avgWorkLoad = 0;
-    double workLoadSum = 0;
+    double azWorkLoadSum = 0;
     for (const auto& node : nodes) {
         if (!node["CPUUtilization"].is_null()) {
             double cpuUtilization = node["CPUUtilization"].number_value();
-            workLoadSum += cpuUtilization;
+            azWorkLoadSum += cpuUtilization;
         }
     }
     if (!nodes.empty()) {
-        avgWorkLoad = workLoadSum/nodes.size();
+        avgWorkLoad = azWorkLoadSum/nodes.size();
     }
     auto nodeFactorDataMap = std::unordered_map<std::string, std::shared_ptr<NodeFactorData>>();
     double rateThreshold = static_cast<double>(this->rateFactorMap["rateThreshold"]);
@@ -153,9 +153,9 @@ std::tuple<int, std::string> ConsulResolver::_updateNodeFactorDataMap() {
             std::string instanceId = node["instanceid"].string_value();
             double cpuUtilization = node["CPUUtilization"].number_value();
             double weight = 0.0;
-            auto i = this->nodeFactorDataMap.find(instanceId);
-            if (i==this->nodeFactorDataMap.end()) {
-                auto nd = i->second;
+            auto iterator = this->nodeFactorDataMap.find(instanceId);
+            if (iterator==this->nodeFactorDataMap.end()) {
+                auto nd = iterator->second;
                 weight = nd->weight;
             }
             if (std::abs(cpuUtilization-avgWorkLoad)>avgWorkLoad*rateThreshold) {
